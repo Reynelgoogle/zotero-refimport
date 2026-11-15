@@ -1,0 +1,6 @@
+# Paquete chrome del complemento "Importar Referencias Vancouver".
+# bootstrap.js lo registra también con aomStartup.registerChrome; este
+# archivo va en el .xpi como respaldo y para que el paquete sea
+# inspeccionable. El diálogo se abre como
+# chrome://refimport/content/reviewDialog.xhtml.
+content refimport content/

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Pantalla de revisión de "Importar Referencias Vancouver".
+     Ventana XHTML propia (Zotero 10: los .xul pasaron a .xhtml), abierta
+     con window.openDialog desde refimport.js. Los datos llegan en
+     window.arguments[0]: { refs, sourcePath, isDocx, showFlags,
+     rootURI, Zotero }. El diálogo crea los ítems, exporta el RIS y
+     enlaza las citas; nada se crea en Zotero hasta pulsar
+     "Crear ítems en Zotero".
+     Patrón de carga (v0.1.4, como los diálogos propios de Zotero 10,
+     p. ej. fileRenamingDialog.xhtml): UN bloque <script> en línea que
+     carga todo con Services.scriptloader.loadSubScript(..., this).
+     Los <script src="..."> externos daban una ventana vacía en
+     Zotero 10: el documento no llegaba a pintarse. -->
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+        xmlns:html="http://www.w3.org/1999/xhtml"
+        id="refimport-review"
+        windowtype="refimport:review"
+        title="Importar Referencias Vancouver — Revisión"
+        width="960"
+        height="620"
+        onload="RefImportDialog.init()">
+  <script><![CDATA[
+    // Carga de las librerías en el ámbito de esta ventana. v0.1.5: el
+    // documento se sirve por chrome://refimport/content/, así que la
+    // base se deriva de documentURI; si llega rootURI por argumentos,
+    // se usa esa (funciona igual con jar: en loadSubScript).
+    (function () {
+      var args = (window.arguments && window.arguments[0]) || {};
+      var base = args.rootURI
+        ? args.rootURI + "content/"
+        : document.documentURI.replace(/[^\/]*$/, "");
+      try {
+        Services.scriptloader.loadSubScript(
+          "chrome://zotero/content/include.js", this);
+        Services.scriptloader.loadSubScript(base + "lib/jszip.min.js", this);
+        Services.scriptloader.loadSubScript(base + "lib/ris.js", this);
+        Services.scriptloader.loadSubScript(
+          base + "linkCitations.js", this);
+        Services.scriptloader.loadSubScript(
+          base + "reviewDialog.js", this);
+      }
+      catch (e) {
+        var el = document.getElementById("refimport-status");
+        if (el) {
+          el.textContent = "Error al cargar el diálogo: " +
+            (e && e.message ? e.message : e);
+        }
+      }
+    }).call(this);
+  ]]></script>
+  <html:style>
+    #refimport-root { padding: 12px; font-family: sans-serif; font-size: 13px; }
+    #refimport-table { border-collapse: collapse; width: 100%; }
+    #refimport-table th, #refimport-table td {
+      border: 1px solid #ccc; padding: 4px 6px; vertical-align: top; text-align: left;
+    }
+    #refimport-table th { background: #eee; }
+    #refimport-table tr.excluida td { color: #888; text-decoration: line-through; }
+    #refimport-table td.flags { color: #a60; font-size: 12px; }
+    #refimport-status { margin: 8px 0; min-height: 1.2em; white-space: pre-wrap; }
+    #refimport-buttons html|button { margin-right: 8px; }
+  </html:style>
+  <html:div id="refimport-root">
+    <html:h2>Revisar referencias antes de importar</html:h2>
+    <html:p id="refimport-summary">Cargando la revisión…</html:p>
+    <html:div style="overflow: auto; max-height: 60vh;">
+      <html:table id="refimport-table">
+        <html:thead>
+          <html:tr>
+            <html:th title="Incluir en la importación">✓</html:th>
+            <html:th>Nº</html:th>
+            <html:th>Autores</html:th>
+            <html:th>Título</html:th>
+            <html:th>Revista / Libro</html:th>
+            <html:th>Año</html:th>
+            <html:th>Páginas</html:th>
+            <html:th>DOI</html:th>
+            <html:th>Avisos</html:th>
+          </html:tr>
+        </html:thead>
+        <html:tbody id="refimport-body"></html:tbody>
+      </html:table>
+    </html:div>
+    <html:p id="refimport-status"></html:p>
+    <html:div id="refimport-buttons">
+      <html:button id="btn-create">Crear ítems en Zotero</html:button>
+      <html:button id="btn-ris">Exportar RIS</html:button>
+      <html:button id="btn-link">Enlazar citas en el Word</html:button>
+      <html:button id="btn-close">Cancelar</html:button>
+    </html:div>
+  </html:div>
+</window>
