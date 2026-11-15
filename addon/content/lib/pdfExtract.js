@@ -47,6 +47,12 @@ const HEADINGS = new Set([
   "list of references",
   "lista de referencias",
 ]);
+/* Encabezados justificados que el PDF parte letra a letra:
+ * "B I B L I O G R A F I A", "BIBLIOGR A FÍ A". Se comparan también sin
+ * espacios. */
+const HEADINGS_COMPACTO = new Set(
+  [...HEADINGS].map((h) => h.replace(/\s+/g, ""))
+);
 /* Numeración de referencia al inicio de línea: "1.", "1)", "[1]",
  * "(1)" o "1 -". Un solo helper para el segmentador y el fallback. */
 const NUM_RE = /^(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)]|(\d+)\s*[-–—])\s*(.*)$/;
@@ -111,7 +117,10 @@ const PARECIDO_RE =
  * referencia de un dato ("Calibre de referencia", "Valor de
  * referencia"), no la sección de referencias. */
 function esEncabezadoExacto(linea) {
-  return HEADINGS.has(normalizarEncabezado(linea));
+  const s = normalizarEncabezado(linea);
+  if (HEADINGS.has(s)) return true;
+  // "BIBLIOGR A FÍ A" (justificado): comparar sin espacios.
+  return HEADINGS_COMPACTO.has(s.replace(/\s+/g, ""));
 }
 
 function esEncabezadoParecido(linea) {
@@ -181,6 +190,56 @@ function buscarCorridaNumerada(lineas) {
   return -1;
 }
 
+/* Algunos PDF (o el extractor de Zotero con texto en columnas) pegan
+ * varias referencias en una misma línea:
+ *   "...799-810. 2. Alevizakos M, ... 3. Farro..."
+ * El lector por líneas solo veía la 1 y se tragaba el resto. Este paso
+ * inserta un corte antes del número EXACTO que toca (2, luego 3...),
+ * así no parte un "(2)" de número de fascículo ni un año. */
+function patronMarcador(n) {
+  const num = String(n);
+  return new RegExp(
+    "(^|\\s)(?:\\[\\s*" + num + "\\s*\\]|" +
+    "\\(\\s*" + num + "\\s*\\)|" +
+    num + "\\s*[.)]|" +
+    num + "\\s*[-\u2013\u2014])\\s+",
+    "g"
+  );
+}
+
+function buscarMarcadorInline(texto, n, desde) {
+  const re = patronMarcador(n);
+  re.lastIndex = desde || 0;
+  let m;
+  while ((m = re.exec(texto))) {
+    const idx = m.index + m[1].length;
+    if (idx > 0) return { index: idx, length: m[0].length - m[1].length };
+  }
+  return null;
+}
+
+function separarLineasNumeradas(lineas) {
+  const salida = [];
+  let esperado = null;
+  for (const original of lineas) {
+    let s = original;
+    let vueltas = 0;
+    while (s && vueltas++ < 500) {
+      const cabecera = numDeLinea(s.replace(/^\f+/, "").trimStart());
+      if (cabecera && (esperado === null || cabecera.num === esperado)) {
+        esperado = cabecera.num + 1;
+      }
+      if (esperado === null) break;
+      const m = buscarMarcadorInline(s, esperado, 1);
+      if (!m) break;
+      salida.push(s.slice(0, m.index));
+      s = s.slice(m.index);
+    }
+    if (s) salida.push(s);
+  }
+  return salida;
+}
+
 function extraerReferencias(lineas) {
   /* Devuelve la lista de referencias en texto (una por cadena). */
   // 1. localizar el encabezado de referencias (o el fallback)
@@ -197,7 +256,8 @@ function extraerReferencias(lineas) {
     }
     idxInicio = idxCorrida;
   }
-  const resto = lineas.slice(idxInicio);
+  // v0.1.6: separar referencias que vienen pegadas en la misma línea.
+  const resto = separarLineasNumeradas(lineas.slice(idxInicio));
   // 2. segmentar por número y unir líneas. El número debe ser
   // SECUENCIAL (1, 2, 3...): una línea como "204. 10.1055/..." es la
   // continuación de la página partida "194-", no la referencia 204.
