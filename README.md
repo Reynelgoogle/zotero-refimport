@@ -31,7 +31,8 @@ El repositorio contiene el código fuente del complemento. Para instalarlo
 hay que empaquetarlo como `.xpi`:
 
 ```powershell
-Compress-Archive -Path manifest.json, bootstrap.js, chrome.manifest, prefs.js, refimport.js, content -DestinationPath refimport-0.1.5.xpi
+Compress-Archive -Path manifest.json, bootstrap.js, chrome.manifest, prefs.js, refimport.js, content -DestinationPath refimport-0.1.5.zip
+Rename-Item refimport-0.1.5.zip refimport-0.1.5.xpi
 ```
 
 En Zotero: **Herramientas → Complementos → ⚙ → Instalar complemento desde
