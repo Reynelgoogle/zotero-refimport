@@ -13,7 +13,10 @@ a internet y no necesita conexión.
    páginas, DOI) con reglas de Vancouver.
 3. Muestra una pantalla de revisión para incluir o descartar filas antes
    de importar.
-4. Crea los ítems en la biblioteca de Zotero.
+4. Crea los ítems en una **colección nueva** de la biblioteca de Zotero,
+   llamada `Referencias de <documento> (AAAA-MM-DD HH:MM)`, y deja esa
+   colección seleccionada para que se vean los ítems al cerrar la
+   pantalla de revisión.
 5. Exporta la lista a RIS.
 6. Si el origen es un `.docx`, genera una copia del documento con las
    citas enlazadas a Zotero y la bibliografía como campo
@@ -31,12 +34,13 @@ El repositorio contiene el código fuente del complemento. Para instalarlo
 hay que empaquetarlo como `.xpi`:
 
 ```powershell
-New-Item -ItemType Directory -Force dist | Out-Null
-Push-Location addon
-Compress-Archive -Path manifest.json, bootstrap.js, chrome.manifest, prefs.js, refimport.js, content -DestinationPath ..\dist\refimport-0.1.6.zip
-Pop-Location
-Rename-Item dist\refimport-0.1.6.zip dist\refimport-0.1.6.xpi
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
+
+El script crea `dist/refimport-<versión>.xpi` con las entradas del ZIP en
+barra normal. No uses `Compress-Archive`: en Windows mete las rutas con
+barra invertida y Zotero no encuentra `chrome://refimport/content/...`
+dentro del `.xpi` (el diálogo abre "file not found").
 
 En Zotero: **Herramientas → Complementos → ⚙ → Instalar complemento desde
 archivo…** y seleccionar el `.xpi`.

@@ -1,12 +1,13 @@
 {
   "manifest_version": 2,
   "name": "Importar Referencias Vancouver",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Importa referencias Vancouver desde un documento Word (.docx) o un PDF a Zotero: las parsea sin IA ni internet, las revisas en pantalla, crea los ítems y enlaza las citas en el Word.",
   "homepage_url": "https://github.com/Reynelgoogle/zotero-refimport",
   "applications": {
     "zotero": {
       "id": "refimport@reynel.cu",
+      "update_url": "https://example.com/refimport/updates.json",
       "strict_min_version": "7.0",
       "strict_max_version": "10.*"
     }

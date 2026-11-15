@@ -6,10 +6,13 @@
  * "Crear ítems en Zotero".
  *
  * Botones:
- *   - Crear ítems en Zotero: new Zotero.Item + setField + setCreators +
- *     saveTx por cada referencia incluida. Guarda el mapa
- *     número -> { uri, itemData, key } en args.createdMap (lo necesita
- *     el enlazado) y en this.createdMap.
+ *   - Crear ítems en Zotero: crea una colección nueva por cada tanda
+ *     (nombre = documento + fecha/hora local), después new Zotero.Item +
+ *     setField + setCreators + setCollections + saveTx por cada
+ *     referencia incluida. Guarda el mapa número -> { uri, itemData,
+ *     key } en args.createdMap (lo necesita el enlazado) y en
+ *     this.createdMap. Al terminar selecciona la colección en la
+ *     ventana principal.
  *   - Exportar RIS: aRis (ris.js) de las incluidas, junto al documento
  *     original con sufijo "-refs.ris".
  *   - Enlazar citas en el Word: solo si el origen fue DOCX y los ítems
@@ -127,6 +130,71 @@ var RefImportDialog = {
 		return this.args.refs.filter((r) => r.included);
 	},
 
+	_collectionName() {
+		/* Nombre visible para saber dónde buscar: documento + fecha y
+		 * hora local. Ej.: "Referencias de caso renal (2026-11-14 22:20)". */
+		let base = String(this.args.sourcePath || "referencias")
+			.split(/[\\/]/).pop()
+			.replace(/\.[^.]+$/, "")
+			.trim() || "referencias";
+		let d = new Date();
+		let pad = (n) => String(n).padStart(2, "0");
+		let stamp = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" +
+			pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+		return "Referencias de " + base + " (" + stamp + ")";
+	},
+
+	async _createCollection(name) {
+		/* Una colección nueva por cada pulsación de "Crear ítems". Si ya
+		 * existe una con el mismo nombre (dos tandas en el mismo minuto),
+		 * se añade " (2)", " (3)"... */
+		let Z = this.Zotero;
+		let libraryID = (Z.Libraries && Z.Libraries.userLibraryID) || 1;
+		let finalName = name;
+		try {
+			let existing = new Set();
+			let cols = await Z.Collections.getByLibrary(libraryID);
+			for (let c of cols) existing.add(c.name);
+			let i = 2;
+			while (existing.has(finalName)) {
+				finalName = name + " (" + i + ")";
+				i++;
+			}
+		}
+		catch (e) {
+			// Si no se pueden listar, se intenta crear con el nombre base.
+		}
+		let col = new Z.Collection();
+		col.libraryID = libraryID;
+		col.name = finalName;
+		await col.saveTx();
+		return col;
+	},
+
+	_selectCollection(collectionID) {
+		/* Deja seleccionada la colección recién creada en la ventana
+		 * principal, para que el usuario vea los ítems al cerrar el
+		 * diálogo. Si la API cambia, no se rompe la importación. */
+		try {
+			let Z = this.Zotero;
+			let win = Z.getMainWindow ? Z.getMainWindow() : null;
+			let pane = win && win.ZoteroPane;
+			let view = pane && pane.collectionsView;
+			if (!view) return;
+			if (typeof view.selectCollection === "function") {
+				view.selectCollection(collectionID);
+			}
+			else if (typeof view.selectByID === "function") {
+				view.selectByID("C" + collectionID);
+			}
+		}
+		catch (e) {
+			if (this.Zotero && this.Zotero.debug) {
+				this.Zotero.debug("RefImport: no se pudo seleccionar la colección (" + e + ")");
+			}
+		}
+	},
+
 	_safeSet(item, field, value) {
 		/* setField puede fallar si el campo no vale para ese tipo de
 		 * ítem (p. ej. "edition" en un artículo). No se rompe la
@@ -150,10 +218,25 @@ var RefImportDialog = {
 				return;
 			}
 			this._status("Creando " + refs.length + " ítems…");
+			// v0.1.7: cada tanda va a una colección nueva. Así el usuario
+			// sabe exactamente dónde buscar y no quedan ítems perdidos
+			// en Mi biblioteca.
+			let collection = null;
+			let collectionName = "";
+			try {
+				collection = await this._createCollection(this._collectionName());
+				collectionName = collection.name;
+				this._status("Creando " + refs.length + " ítems en la colección «" +
+					collectionName + "»…");
+			}
+			catch (e) {
+				if (this.Zotero && this.Zotero.logError) this.Zotero.logError(e);
+				collection = null;
+			}
 			let created = {};
 			let n = 0;
 			for (let ref of refs) {
-				let item = await this._createOne(ref);
+				let item = await this._createOne(ref, collection ? collection.id : null);
 				created[String(ref.numero)] = {
 					uri: this._itemURI(item),
 					itemData: this._itemData(item, ref),
@@ -163,10 +246,14 @@ var RefImportDialog = {
 			}
 			this.createdMap = created;
 			this.args.createdMap = created;
-			this._status("Creados " + n + " ítems en Zotero." +
+			let donde = collection
+				? " en la colección «" + collectionName + "»"
+				: " en Zotero (sin colección)";
+			this._status("Creados " + n + " ítems" + donde + "." +
 				(this.args.isDocx
 					? " Ya puedes pulsar «Enlazar citas en el Word»."
 					: ""));
+			if (collection) this._selectCollection(collection.id);
 		}
 		catch (e) {
 			if (this.Zotero && this.Zotero.logError) this.Zotero.logError(e);
@@ -175,7 +262,7 @@ var RefImportDialog = {
 		}
 	},
 
-	async _createOne(ref) {
+	async _createOne(ref, collectionID) {
 		let type = ref.type === "chapter" ? "bookSection"
 			: ref.type === "webpage" ? "webpage"
 			: ref.type === "unknown" ? (ref.journal ? "journalArticle" : "document")
@@ -192,11 +279,13 @@ var RefImportDialog = {
 			if (ref.edition) this._safeSet(item, "edition", ref.edition);
 		}
 		else if (type === "webpage") {
-			if (ref.url) this._safeSet(item, "url", ref.url);
-			if (ref.accessed) this._safeSet(item, "accessDate", ref.accessed);
 			if (ref.place) this._safeSet(item, "place", ref.place);
 			if (ref.publisher) this._safeSet(item, "publisher", ref.publisher);
 		}
+		// v0.1.7: el enlace de "Disponible en:" también vale para un
+		// artículo de revista; se guarda en cualquier tipo.
+		if (ref.url) this._safeSet(item, "url", ref.url);
+		if (ref.accessed) this._safeSet(item, "accessDate", ref.accessed);
 		if (ref.year) {
 			this._safeSet(item, "date", ref.month ? ref.year + " " + ref.month : ref.year);
 		}
@@ -229,6 +318,15 @@ var RefImportDialog = {
 			}
 		}
 		if (creators.length) item.setCreators(creators);
+		if (collectionID) {
+			// setCollections antes de saveTx: un solo guardado por ítem.
+			if (typeof item.setCollections === "function") {
+				item.setCollections([collectionID]);
+			}
+			else if (typeof item.addToCollection === "function") {
+				item.addToCollection(collectionID);
+			}
+		}
 		await item.saveTx();
 		return item;
 	},

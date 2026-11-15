@@ -47,14 +47,26 @@
 //   Con mes:         2024 Jan;143(1):45-52. (año mes;volumen(número):páginas)
 // El orden de la alternancia de meses es el mismo que en Python
 // ("Sep" antes que "Sept": el `[a-z]*` posterior se traga la "t").
+// v0.1.7: los PDF y las webs usan guion largo (277–87), signo menos
+// (277−87) o guion Unicode (277‐87), no solo el guion ASCII. También
+// hay páginas electrónicas (e4878, 6.e1–6.e7).
 const MESES =
   "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|" +
   "Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic";
+const DASHES = "\\-\\u2010-\\u2015\\u2212";
+const PAGE_TOKEN = "[A-Za-z]?\\d+(?:\\.e\\d+)?";
 const TAIL_RE = new RegExp(
   "(?<year>\\d{4})(?:\\s+(?<month>" + MESES + ")[a-z]*)?" +
+    "(?:\\s+\\d{1,2})?" +
     "\\s*[;,]\\s*(?<volume>\\d+)" +
     "(?:\\((?<issue>[^)]+)\\))?" +
-    ":(?<pages>[A-Za-z]?\\d+(?:-\\d+)?)\\.?\\s*$"
+    ":\\s*(?<pages>" +
+    PAGE_TOKEN +
+    "(?:\\s*[" +
+    DASHES +
+    "]\\s*" +
+    PAGE_TOKEN +
+    ")?)\\.?\\s*$"
 );
 // DOI: el sufijo puede llevar puntos, guiones y barras
 // (10.1016/j.jvir.2019.12.001); se quitan . , ; finales.
@@ -81,19 +93,32 @@ for (const k of Object.keys(ABBR)) ABBR_INV[ABBR[k]] = k;
 // family "Rubilotta", given "E". El lookahead exige que tras las
 // iniciales venga coma, punto, dos puntos o fin de texto. El apellido
 // admite partículas en minúscula ("de la Cruz", "van der Berg").
+// v0.1.7: las iniciales pueden venir separadas por espacio o por un
+// guion Unicode ("Rumpelt H ‐J"): se aceptan y luego se normalizan.
 // Ver la nota de divergencia sobre `\w` de Python vs `\p{L}` arriba.
 const _FAM =
   "[\\p{L}][\\p{L}\\p{M}0-9_'\\-]*(?:\\s+[\\p{L}][\\p{L}\\p{M}0-9_'\\-]*)*";
+const _GIVEN =
+  "[A-Z]{1,4}(?:(?:\\s*[" + DASHES + "]\\s*|\\s+)[A-Z]{1,4})*";
 const AUTHOR_START_RE = new RegExp(
-  "^(?<family>" + _FAM + ")\\s+(?<given>[A-Z]{1,4})(?=[,.:]|$)",
+  "^(?<family>" + _FAM + ")\\s+(?<given>" + _GIVEN + ")(?=[,.:]|$)",
   "u"
 );
 const AUTHOR_SUFFIX_START_RE = new RegExp(
   "^(?<family>" +
     _FAM +
-    ")\\s+(?<given>[A-Z]{1,4})\\s+(?<suffix>2nd|3rd|Jr\\.?|Sr\\.?|II|III|IV)(?=[,.:]|$)",
+    ")\\s+(?<given>" +
+    _GIVEN +
+    ")\\s+(?<suffix>2nd|3rd|Jr\\.?|Sr\\.?|II|III|IV)(?=[,.:]|$)",
   "u"
 );
+
+// "H ‐J" -> "H-J"; "J A" -> "JA".
+function normalizarIniciales(given) {
+  return given
+    .replace(/\s*[-\u2010-\u2015\u2212]\s*/g, "-")
+    .replace(/\s+/g, "");
+}
 
 // Capítulo con editor(es) y edición:
 // "En: Partin AW, editor. Campbell-Walsh-Wein Urology. 12th ed. Philadelphia: Elsevier; 2021. p. 123-45."
@@ -138,12 +163,15 @@ function splitAutores(head) {
     const m = AUTHOR_START_RE.exec(head.slice(pos));
     const m2 = m ? null : AUTHOR_SUFFIX_START_RE.exec(head.slice(pos));
     if (m) {
-      autores.push({ family: m.groups.family, given: m.groups.given });
+      autores.push({
+        family: m.groups.family,
+        given: normalizarIniciales(m.groups.given),
+      });
       pos += m[0].length;
     } else if (m2) {
       autores.push({
         family: m2.groups.family + " " + m2.groups.suffix,
-        given: m2.groups.given,
+        given: normalizarIniciales(m2.groups.given),
       });
       pos += m2[0].length;
     } else {
@@ -168,15 +196,78 @@ function protegerAbbr(texto) {
 
 function expandirPaginas(paginas) {
   /* '144-7' -> ['144', '147']; 'S10-5' -> ['S10', 'S15'];
-   * 'e33479' -> ['e33479', null]; '140' -> ['140', null]. */
-  const m = /^([A-Za-z]?)(\d+)-(\d+)$/.exec(paginas);
-  if (!m) return [paginas, null];
-  const pref = m[1];
+   * 'e33479' -> ['e33479', null]; '140' -> ['140', null].
+   * v0.1.7: acepta guion largo/signo menos y páginas electrónicas
+   * ('6.e1–6.e7' -> ['6.e1', '6.e7']). */
+  const norm = String(paginas)
+    .replace(/\s*[-\u2010-\u2015\u2212]\s*/g, "-")
+    .trim();
+  const m = /^([A-Za-z]?)(\d+)(\.e\d+)?-([A-Za-z]?)(\d+)(\.e\d+)?$/.exec(norm);
+  if (!m) return [norm, null];
+  const pref = m[1] || m[4];
   const ini = m[2];
-  const fin = m[3];
+  const fin = m[5];
+  const iniSuf = m[3] || "";
+  const finSuf = m[6] || "";
+  if (iniSuf || finSuf) {
+    // Páginas electrónicas: cada lado lleva su propio sufijo.
+    return [pref + ini + iniSuf, (m[4] || "") + fin + finSuf];
+  }
   // Regla Vancouver: el final abreviado hereda los dígitos iniciales del inicio.
   const finCompleto = pref + ini.slice(0, ini.length - fin.length) + fin;
   return [pref + ini, finCompleto];
+}
+
+// v0.1.7: pistas para distinguir un autor corporativo de un título que
+// simplemente empieza la referencia ("Cancer, Renal. StatPearls...").
+function pareceInstitucion(s) {
+  return /\b(?:Instituto|Instituci[oó]n|Organizaci[oó]n|Ministerio|Centro|Centers?|National|Society|Association|Asociaci[oó]n|Federaci[oó]n|Fundaci[oó]n|Department|Agency|WHO|OMS|NCI|CDC|Universidad|Hospital)\b/i
+    .test(s);
+}
+
+function parseWebFallback(t, res) {
+  /* Rama de página web, también para referencias sin cola de revista.
+   * v0.1.7: no inventa una revista ni deja el título en "."; separa
+   * autores, título, año y Lugar: Editorial. */
+  res.type = "webpage";
+  let text = t.replace(/\s+/g, " ").trim().replace(/^[.;\s]+/, "");
+  let [autores, etAl, fl, resto] = splitAutores(text);
+  res.flags.push(...fl);
+  if (autores.length === 0) {
+    const partes = splitFirst(text, DOT_SPACE_RE);
+    const primero = partes[0].trim().replace(/\.+$/, "");
+    if (partes.length === 2 && pareceInstitucion(primero)) {
+      autores = [{ family: primero, given: "" }];
+      res.flags = res.flags.filter((f) => f !== "sin autores reconocibles");
+      res.flags.push("autor corporativo (sin iniciales)");
+      resto = partes[1];
+    } else {
+      resto = text;
+    }
+  }
+  res.authors = autores;
+  res.etAl = etAl;
+  resto = resto.trim().replace(/^[.;\s]+/, "");
+  let partes = splitFirst(resto, DOT_SPACE_RE);
+  let titulo = partes[0].trim();
+  let cola = partes.length > 1 ? partes[1].trim() : "";
+  if (!titulo || titulo === ".") titulo = resto.trim();
+  res.title = titulo.replace(/\.+$/, "").trim();
+  // Año: el último de la cola (el de la publicación, no el de acceso).
+  const years = [...cola.matchAll(/\b((?:19|20)\d{2})\b/g)];
+  if (years.length) res.year = years[years.length - 1][1];
+  // "Lugar: Editorial; Año" (la editorial no debe tragarse el año).
+  const mPp = /^(?<place>.+?):\s*(?<publisher>.+?)(?:[;.]\s*(?:19|20)\d{2}\b.*)?$/i
+    .exec(cola);
+  if (mPp) {
+    const place = mPp.groups.place.trim();
+    const publisher = mPp.groups.publisher.trim().replace(/[.;]+$/, "");
+    if (place && !/^(?:19|20)\d{2}$/.test(place)) {
+      res.place = place;
+      res.publisher = publisher;
+    }
+  }
+  return res;
 }
 
 function parseReferencia(texto) {
@@ -205,9 +296,44 @@ function parseReferencia(texto) {
     flags: [],
   };
   let t = texto.trim();
-  // Quitar numeración inicial "12. "
+  // Quitar numeración inicial "12. " y etiquetas de "Citar como:".
+  // Las webs cubanas (Rev Ciencias Médicas, etc.) ponen "Citar como:"
+  // delante de los autores y antes se colaba en el título.
   t = t.replace(/^\d+\.\s*/, "");
-  res.rawClean = t;
+  t = t.replace(/^(?:c[oó]mo citar|citar como|cite as)\s*[:.]\s*/i, "");
+  res.rawClean = t.replace(/\s+/g, " ").trim();
+
+  // [citado ...] / [cited ...] -> fecha de acceso; se quita del texto.
+  const mAcc = /\[(?:citado|cited)\s+([^\]]*)\]/i.exec(t);
+  if (mAcc) {
+    res.accessed = mAcc[1].trim();
+    t = (t.slice(0, mAcc.index) + " " + t.slice(mAcc.index + mAcc[0].length))
+      .replace(/\s+/g, " ").trim();
+  }
+  // [Internet] y menciones de soporte: no aportan a los campos.
+  t = t.replace(/\s*\[(?:Internet|Epub ahead of print|Resumen|Abstract)\]/gi, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/\s+/g, " ").trim();
+
+  // URL: se guarda SIEMPRE antes de decidir el tipo. v0.1.7: que una
+  // referencia traiga "Disponible en:" no la convierte en página web;
+  // puede ser un artículo de revista con enlace.
+  const mUrl = /(https?:\/\/[^\s<>"]+)/i.exec(t);
+  if (mUrl) {
+    res.url = mUrl[1].replace(/[.,;]+$/, "");
+    t = (t.slice(0, mUrl.index) + " " + t.slice(mUrl.index + mUrl[0].length))
+      .replace(/\s+/g, " ").trim();
+  }
+  // "Disponible en: www..." sin esquema.
+  const mLabel = /(?:Disponible en|Available from):\s*(\S+)/i.exec(t);
+  if (mLabel) {
+    let u = mLabel[1].replace(/[.,;]+$/, "");
+    if (!res.url && /^www\./i.test(u)) res.url = "http://" + u;
+    t = (t.slice(0, mLabel.index) + " " + t.slice(mLabel.index + mLabel[0].length))
+      .replace(/\s+/g, " ").trim();
+  }
+  // Restos de la etiqueta al final ("... . Disponible en:").
+  t = t.replace(/[.;\s]*(?:Disponible en|Available from):?\s*$/i, "").trim();
 
   const doiM = DOI_RE.exec(t);
   if (doiM) {
@@ -218,60 +344,6 @@ function parseReferencia(texto) {
     t = t.replace(/https?:\/\/(?:dx\.)?doi\.org\/?\s*$/, "");
     t = t.replace(/[\s.,;]*\bdoi\s*:?\s*\.?\s*$/i, "");
     t = t.replace(/[ .;]+$/, "");
-  }
-
-  // --- página web: "Autor. Título [Internet]. Lugar: Editorial; Año [citado ...]. Disponible en: URL" ---
-  if (/(?:Disponible en|Available from):/i.test(t)) {
-    res.type = "webpage";
-    const mUrl = /(https?:\/\/\S+)/.exec(t);
-    if (mUrl) {
-      res.url = mUrl[1].replace(/[.,;]+$/, "");
-      t = t.slice(0, mUrl.index).replace(/\s+$/, "");
-    }
-    t = t.replace(/(?:Disponible en|Available from):\s*$/i, "").trim();
-    const mAcc = /\[(?:citado|cited)\s+([^\]]+)\]/i.exec(t);
-    if (mAcc) {
-      res.accessed = mAcc[1].trim();
-      t = (t.slice(0, mAcc.index) + t.slice(mAcc.index + mAcc[0].length)).trim();
-    }
-    const mY = [...t.matchAll(/;\s*(\d{4})\b/g)];
-    if (mY.length > 0) {
-      const last = mY[mY.length - 1];
-      res.year = last[1];
-      t = t.slice(0, last.index).replace(/\s+$/, "");
-    }
-    let [autores, etAl, fl, resto] = splitAutores(t);
-    if (autores.length === 0) {
-      const partes = splitFirst(t, DOT_SPACE_RE);
-      if (partes.length === 2) {
-        autores = [{ family: partes[0].trim(), given: "" }];
-        fl = fl.filter((f) => f !== "sin autores reconocibles");
-        fl.push("autor corporativo (sin iniciales)");
-        resto = partes[1];
-      }
-    }
-    res.flags.push(...fl);
-    res.authors = autores;
-    res.etAl = etAl;
-    resto = resto.trim();
-    const mInet = /\[Internet\]/.exec(resto);
-    if (mInet) {
-      res.title = resto.slice(0, mInet.index).trim().replace(/\.+$/, "");
-      resto = resto
-        .slice(mInet.index + mInet[0].length)
-        .trim()
-        .replace(/^[. ]+/, "");
-    } else {
-      const partes = splitFirst(resto, DOT_SPACE_RE);
-      res.title = partes[0].trim();
-      resto = partes.length > 1 ? partes[1] : "";
-    }
-    const mPp = /^(?<place>.+?):\s*(?<publisher>.+?)\s*$/.exec(resto.trim());
-    if (mPp) {
-      res.place = mPp.groups.place.trim();
-      res.publisher = mPp.groups.publisher.trim().replace(/\.+$/, "");
-    }
-    return res;
   }
 
   // --- capítulo de libro: "Autores. Título. En: ..." ---
@@ -317,8 +389,9 @@ function parseReferencia(texto) {
   const m = TAIL_RE.exec(t);
   if (!m) {
     res.flags.push("sin cola Año;Volumen(Número):Páginas reconocible");
-    res.type = "unknown";
-    return res;
+    // v0.1.7: en vez de dejar un ítem "document" vacío, se intenta la
+    // rama de página web (título, año, Lugar: Editorial y URL).
+    return parseWebFallback(t, res);
   }
   res.year = m.groups.year;
   res.month = m.groups.month || "";
@@ -335,10 +408,6 @@ function parseReferencia(texto) {
   res.flags.push(...fl);
   res.authors = autores;
   res.etAl = etAl;
-  if (autores.length === 0) {
-    res.type = "unknown";
-    return res;
-  }
   const [restoProt, restaurar] = protegerAbbr(resto);
   // String.split con grupo capturador devuelve los separadores
   // intercalados, igual que re.split de Python.
@@ -347,8 +416,7 @@ function parseReferencia(texto) {
   const term = partes.filter((_, i) => i % 2 === 1);
   if (seg.length < 2) {
     res.flags.push("no se separa Título. Revista");
-    res.type = "unknown";
-    return res;
+    return parseWebFallback(t, res);
   }
   if (seg.length > 2) {
     res.flags.push(
