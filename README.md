@@ -31,8 +31,11 @@ El repositorio contiene el código fuente del complemento. Para instalarlo
 hay que empaquetarlo como `.xpi`:
 
 ```powershell
-Compress-Archive -Path manifest.json, bootstrap.js, chrome.manifest, prefs.js, refimport.js, content -DestinationPath refimport-0.1.5.zip
-Rename-Item refimport-0.1.5.zip refimport-0.1.5.xpi
+New-Item -ItemType Directory -Force dist | Out-Null
+Push-Location addon
+Compress-Archive -Path manifest.json, bootstrap.js, chrome.manifest, prefs.js, refimport.js, content -DestinationPath ..\dist\refimport-0.1.6.zip
+Pop-Location
+Rename-Item dist\refimport-0.1.6.zip dist\refimport-0.1.6.xpi
 ```
 
 En Zotero: **Herramientas → Complementos → ⚙ → Instalar complemento desde
@@ -56,21 +59,25 @@ referencias…**.
 ## Estructura
 
 ```
-manifest.json              Metadatos y compatibilidad con Zotero
-bootstrap.js               Ciclo de vida del complemento y menú
-chrome.manifest            Registro del paquete chrome://refimport/
-prefs.js                   Preferencias por defecto
-refimport.js               Lectura de DOCX/PDF y apertura del diálogo
-content/
-  reviewDialog.xhtml       Interfaz de revisión
-  reviewDialog.js          Lógica del diálogo (crear ítems, RIS, enlazar)
-  linkCitations.js         Inserción de campos de cita en el DOCX
-  lib/
-    vancouver.js           Parser de referencias Vancouver
-    pdfExtract.js          Extracción de la lista desde texto de PDF
-    ris.js                 Exportación a RIS
-    jszip.min.js           JSZip 3.10.1 (lectura/escritura de DOCX)
+addon/
+  manifest.json            Metadatos y compatibilidad con Zotero
+  bootstrap.js             Ciclo de vida del complemento y menú
+  chrome.manifest          Registro del paquete chrome://refimport/
+  prefs.js                 Preferencias por defecto
+  refimport.js             Lectura de DOCX/PDF y apertura del diálogo
+  content/
+    reviewDialog.xhtml     Interfaz de revisión
+    reviewDialog.js        Lógica del diálogo (crear ítems, RIS, enlazar)
+    linkCitations.js       Inserción de campos de cita en el DOCX
+    lib/
+      vancouver.js         Parser de referencias Vancouver
+      pdfExtract.js        Extracción de la lista desde texto de PDF
+      ris.js               Exportación a RIS
+      jszip.min.js         JSZip 3.10.1 (lectura/escritura de DOCX)
 ```
+
+`tests/`, `js/` y `parser/` son material local de desarrollo y no se
+publican en GitHub.
 
 ## Limitaciones
 
@@ -95,7 +102,7 @@ Para probar cambios sin empaquetar:
 1. Cerrar Zotero.
 2. En la carpeta `extensions` del perfil de Zotero, crear un archivo de
    texto llamado `refimport@reynel.cu` que contenga la ruta absoluta a
-   esta carpeta.
+   la carpeta `addon/` de este repositorio.
 3. Borrar `extensions.lastAppBuildId` y `extensions.lastAppVersion` de
    `prefs.js` del perfil.
 4. Abrir Zotero.

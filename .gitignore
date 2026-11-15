@@ -6,6 +6,16 @@ node_modules/
 *.zip
 dist/
 
+# Material local de desarrollo (no se publica)
+/tests/
+/js/
+/parser/
+/INSTRUCCIONES_PARA_IA_LOCAL.md
+/investigacion-zotero7.md
+/addon/INFORME.md
+/addon/README.md
+/addon/updates.json
+
 # Sistema
 .DS_Store
 Thumbs.db
