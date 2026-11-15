@@ -149,12 +149,20 @@ var RefImportDialog = {
 		 * existe una con el mismo nombre (dos tandas en el mismo minuto),
 		 * se añade " (2)", " (3)"... */
 		let Z = this.Zotero;
-		let libraryID = (Z.Libraries && Z.Libraries.userLibraryID) || 1;
+		let libraryID = 1;
+		try {
+			libraryID = (Z.Libraries && Z.Libraries.userLibraryID) || 1;
+		}
+		catch (e) {
+			libraryID = 1;
+		}
 		let finalName = name;
 		try {
 			let existing = new Set();
-			let cols = await Z.Collections.getByLibrary(libraryID);
-			for (let c of cols) existing.add(c.name);
+			if (Z.Collections && typeof Z.Collections.getByLibrary === "function") {
+				let cols = await Z.Collections.getByLibrary(libraryID);
+				for (let c of cols) existing.add(c.name);
+			}
 			let i = 2;
 			while (existing.has(finalName)) {
 				finalName = name + " (" + i + ")";
@@ -164,7 +172,16 @@ var RefImportDialog = {
 		catch (e) {
 			// Si no se pueden listar, se intenta crear con el nombre base.
 		}
-		let col = new Z.Collection();
+		let col;
+		try {
+			// Zotero 7/10 admiten los parámetros en el constructor.
+			col = new Z.Collection({ libraryID: libraryID, name: finalName });
+		}
+		catch (e) {
+			col = new Z.Collection();
+		}
+		// Se fijan igualmente: así funciona también si el constructor
+		// de esa versión no aceptara parámetros.
 		col.libraryID = libraryID;
 		col.name = finalName;
 		await col.saveTx();
@@ -223,6 +240,7 @@ var RefImportDialog = {
 			// en Mi biblioteca.
 			let collection = null;
 			let collectionName = "";
+			let collectionError = "";
 			try {
 				collection = await this._createCollection(this._collectionName());
 				collectionName = collection.name;
@@ -231,6 +249,7 @@ var RefImportDialog = {
 			}
 			catch (e) {
 				if (this.Zotero && this.Zotero.logError) this.Zotero.logError(e);
+				collectionError = e && e.message ? e.message : String(e);
 				collection = null;
 			}
 			let created = {};
@@ -248,7 +267,8 @@ var RefImportDialog = {
 			this.args.createdMap = created;
 			let donde = collection
 				? " en la colección «" + collectionName + "»"
-				: " en Zotero (sin colección)";
+				: " en Zotero (sin colección" +
+					(collectionError ? ": " + collectionError : "") + ")";
 			this._status("Creados " + n + " ítems" + donde + "." +
 				(this.args.isDocx
 					? " Ya puedes pulsar «Enlazar citas en el Word»."
@@ -405,9 +425,65 @@ var RefImportDialog = {
 		}
 	},
 
+	_diagnosticoTexto(detalle) {
+		/* Todo lo que hace falta para saber por qué falló el enlazado,
+		 * sin pedirle al usuario que abra la consola. */
+		let Z = this.Zotero;
+		let l = [];
+		l.push("RefImport — error al enlazar citas en el Word");
+		l.push("Fecha: " + new Date().toString());
+		try { l.push("Zotero: " + Z.version + " / " + Z.platform); } catch (e) { /* nada */ }
+		l.push("Documento: " + (this.args ? this.args.sourcePath : "?"));
+		l.push("Referencias parseadas: " +
+			(this.args && this.args.refs ? this.args.refs.length : "?"));
+		l.push("Ítems creados: " +
+			(this.createdMap ? Object.keys(this.createdMap).length : 0));
+		try {
+			l.push("Entorno: " + (RefImportLink && RefImportLink.diagnostico
+				? RefImportLink.diagnostico()
+				: "RefImportLink no cargó"));
+		}
+		catch (e) {
+			l.push("Entorno: no se pudo consultar (" + e + ")");
+		}
+		l.push("");
+		l.push(detalle);
+		return l.join("\n");
+	},
+
+	async _guardarDiagnostico(texto) {
+		/* Se guarda en la carpeta temporal de Zotero (solo si hay error). */
+		let Z = this.Zotero;
+		let path = "";
+		try {
+			if (Z.getTempDirectory) {
+				let directory = Z.getTempDirectory().path;
+				let separator = directory.indexOf("\\") === -1 ? "/" : "\\";
+				path = directory.replace(/[\\/]+$/, "") +
+					separator + "refimport-enlazar-error.txt";
+			}
+		}
+		catch (e) {
+			path = "";
+		}
+		if (!path) return "";
+		try {
+			await Z.File.putContentsAsync(path, texto);
+			return path;
+		}
+		catch (e) {
+			return "";
+		}
+	},
+
 	async linkCitations() {
 		if (!this.createdMap) {
 			this._status("Primero pulsa «Crear ítems en Zotero»: el enlazado necesita las claves de los ítems creados.");
+			return;
+		}
+		if (typeof RefImportLink === "undefined") {
+			this._status("Error al enlazar las citas: no se cargó linkCitations.js. " +
+				"Cierra el diálogo, reinicia Zotero y vuelve a intentarlo.");
 			return;
 		}
 		let btn = document.getElementById("btn-link");
@@ -417,7 +493,8 @@ var RefImportDialog = {
 			let res = await RefImportLink.linkCitations(
 				this.args.sourcePath,
 				this.createdMap,
-				this.args.refs.length
+				this.args.refs.length,
+				(message) => this._status(message)
 			);
 			let msg = "Listo: " + res.fields + " campos de cita (" + res.instances +
 				" instancias, " + res.cited + " referencias distintas) y bibliografía con " +
@@ -431,7 +508,14 @@ var RefImportDialog = {
 		}
 		catch (e) {
 			if (this.Zotero && this.Zotero.logError) this.Zotero.logError(e);
-			this._status("Error al enlazar las citas: " + (e && e.message ? e.message : e));
+			let detalle = e && e.stack ? e.stack : String(e);
+			let msg = "Error al enlazar las citas: " +
+				(e && e.message ? e.message : e);
+			let ruta = await this._guardarDiagnostico(this._diagnosticoTexto(detalle));
+			msg += ruta
+				? "\nDetalles guardados en: " + ruta
+				: "\n" + detalle;
+			this._status(msg);
 			btn.disabled = false;
 		}
 	},

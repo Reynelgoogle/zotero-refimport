@@ -48,8 +48,15 @@ var RefImportLink = (function () {
 	var W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 	var XML_NS = "http://www.w3.org/XML/1998/namespace";
 	var SCHEMA = "https://github.com/citation-style-language/schema/raw/master/csl-citation.json";
-	// (n), (n,m), (n, m, k) y rangos (n-m) — igual que CITA_PAT en Python.
-	var CITA_RE = /\((\d+(?:\s*,\s*\d+)*|\d+\s*-\s*\d+)\)/g;
+	// Guiones que aparecen en las citas: ASCII, guion Unicode, raya,
+	// guion largo y signo menos. Word cambia "-" por "–" con la
+	// autocorrección y antes esas citas no se enlazaban.
+	var DASH = "\\-\\u2010-\\u2015\\u2212";
+	// (n), (n,m), (n-m), (n–m), (n-m,k), (n, m, k), (n–m, k–j)...
+	var CITA_RE = new RegExp(
+		"\\(\\s*(\\d+(?:\\s*[,;]\\s*\\d+|\\s*[" + DASH + "]\\s*\\d+)*)\\s*\\)",
+		"g"
+	);
 	// Encabezados de referencias (misma lista que refimport.js; sin
 	// tildes: el normalizador las quita antes de comparar).
 	var HEADINGS = ["references", "referencias", "referencia bibliografica",
@@ -63,19 +70,118 @@ var RefImportLink = (function () {
 	// Cola Vancouver ligera (solo para el fallback sin encabezado).
 	var TAIL_LIGERO_RE = /\b(?:19|20)\d{2}[;,]\s*\d+\s*(?:\([^)]*\))?\s*:\s*[A-Za-z]?\d+/;
 	var NUM_RE = /^(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)]|(\d+)\s*[-–—])\s*(.*)$/;
+	// Un solo número o un rango "a-b" con cualquiera de los guiones
+	// que mete Word.
+	var RANGO_RE = new RegExp("^(\\d+)\\s*[" + DASH + "]\\s*(\\d+)$");
 
 	function expandir(numsTxt) {
-		/* '(2,4)' -> [2,4]; '(1-3)' -> [1,2,3]. Igual que en Python. */
-		numsTxt = numsTxt.trim();
-		if (numsTxt.indexOf("-") !== -1) {
-			var parts = numsTxt.split("-", 2);
-			var out = [];
-			for (var n = parseInt(parts[0], 10); n <= parseInt(parts[1], 10); n++) {
-				out.push(n);
+		/* '(2,4)' -> [2,4]; '(1-3)' -> [1,2,3];
+		 * '(1–3, 6)' -> [1,2,3,6]; '(6;11)' -> [6,11].
+		 * Antes solo partía por "-" y por ",": con el guion largo de
+		 * Word ("–") o el punto y coma de Vancouver se quedaba con el
+		 * primer número y la cita salía incompleta o se omitía. */
+		var out = [];
+		var tokens = String(numsTxt).split(/\s*[,;]\s*/);
+		for (var i = 0; i < tokens.length; i++) {
+			var tk = tokens[i].trim();
+			if (!tk) continue;
+			var r = RANGO_RE.exec(tk);
+			if (r) {
+				var a = parseInt(r[1], 10);
+				var b = parseInt(r[2], 10);
+				if (a > b) {
+					var t = a;
+					a = b;
+					b = t;
+				}
+				// Tope de seguridad: un "rango" que en realidad son dos
+				// años no debe generar decenas de números.
+				if (b - a > 50) {
+					out.push(a);
+					continue;
+				}
+				for (var n = a; n <= b; n++) out.push(n);
+				continue;
+			}
+			if (/^\d+$/.test(tk)) out.push(parseInt(tk, 10));
+		}
+		return out;
+	}
+
+	// --- acceso a disco ------------------------------------------------
+	// IOUtils existe en las ventanas chrome de Zotero, pero el diálogo
+	// puede quedarse sin él según cómo se cargue la ventana. Se prueban
+	// tres caminos y, si ninguno sirve, se usa Zotero.File (que siempre
+	// está, porque el diálogo recibe el objeto Zotero).
+	function getIO() {
+		try {
+			if (typeof IOUtils !== "undefined" && IOUtils && IOUtils.read) {
+				return IOUtils;
+			}
+		}
+		catch (e) { /* sin IOUtils en este ámbito */ }
+		try {
+			var w = (typeof Zotero !== "undefined" && Zotero.getMainWindow)
+				? Zotero.getMainWindow()
+				: null;
+			if (w && w.IOUtils && w.IOUtils.read) return w.IOUtils;
+		}
+		catch (e) { /* sin ventana principal */ }
+		try {
+			var m = ChromeUtils.importESModule("resource://gre/modules/IOUtils.sys.mjs");
+			if (m && m.IOUtils) return m.IOUtils;
+		}
+		catch (e) { /* módulo no disponible */ }
+		return null;
+	}
+
+	async function leerBytes(path) {
+		var io = getIO();
+		if (io) return new Uint8Array(await io.read(path));
+		if (typeof Zotero !== "undefined" && Zotero.File &&
+			typeof Zotero.File.getBinaryContentsAsync === "function") {
+			// Respaldo: cadena binaria (un carácter por byte).
+			var bin = await Zotero.File.getBinaryContentsAsync(path);
+			var out = new Uint8Array(bin.length);
+			for (var i = 0; i < bin.length; i++) {
+				out[i] = bin.charCodeAt(i) & 0xff;
 			}
 			return out;
 		}
-		return numsTxt.split(/\s*,\s*/).map(function (x) { return parseInt(x, 10); });
+		throw new Error("esta ventana no tiene forma de leer archivos (falta IOUtils)");
+	}
+
+	async function escribirBytes(path, bytes) {
+		var io = getIO();
+		if (io) {
+			await io.write(path, bytes);
+			return;
+		}
+		if (typeof Zotero !== "undefined" && Zotero.File &&
+			typeof Zotero.File.putContentsAsync === "function") {
+			var buf = bytes.buffer.slice(bytes.byteOffset,
+				bytes.byteOffset + bytes.byteLength);
+			await Zotero.File.putContentsAsync(path, buf);
+			return;
+		}
+		throw new Error("esta ventana no tiene forma de escribir archivos (falta IOUtils)");
+	}
+
+	function diagnostico() {
+		/* Foto del entorno para el mensaje de error del diálogo. */
+		var d = [];
+		function tipo(n, f) {
+			try { d.push(n + "=" + f()); }
+			catch (e) { d.push(n + "=ERROR(" + e + ")"); }
+		}
+		tipo("IOUtils", function () { return typeof IOUtils; });
+		tipo("DOMParser", function () { return typeof DOMParser; });
+		tipo("XMLSerializer", function () { return typeof XMLSerializer; });
+		tipo("JSZip", function () { return typeof JSZip; });
+		tipo("Zotero", function () { return typeof Zotero; });
+		tipo("ChromeUtils", function () { return typeof ChromeUtils; });
+		tipo("IOUtils efectivo", function () { return getIO() ? "sí" : "no"; });
+		return d.join(", ");
 	}
 
 	function nuevoCitationID(usados) {
@@ -316,18 +422,52 @@ var RefImportLink = (function () {
 		return -1;
 	}
 
-	async function linkCitations(docxPath, createdMap, totalRefs) {
+	async function linkCitations(docxPath, createdMap, totalRefs, onProgress) {
 		/* createdMap: { "1": { uri, itemData }, ... } (claves = nº de ref).
 		 * totalRefs: nº total de referencias parseadas (para validar rango).
 		 * Devuelve { outputPath, fields, instances, cited, bibItems, skipped }. */
+		function progress(message) {
+			if (typeof onProgress === "function") onProgress(message);
+		}
+		function yieldToUI() {
+			return new Promise(function (resolve) { setTimeout(resolve, 0); });
+		}
+
 		// Igual que en _readDocx: IOUtils.read devuelve un Uint8Array
 		// de otro realm y JSZip lo rechaza sin la copia.
-		var bytes = new Uint8Array(await IOUtils.read(docxPath));
-		var zip = await JSZip.loadAsync(bytes);
-		var entry = zip.file("word/document.xml");
+		var bytes, zip, entry, xml, doc;
+		progress("Leyendo el archivo Word…");
+		try {
+			bytes = await leerBytes(docxPath);
+		}
+		catch (e) {
+			throw new Error("No se pudo leer el Word («" + docxPath + "»): " +
+				(e && e.message ? e.message : e));
+		}
+		progress("Abriendo el DOCX…");
+		try {
+			zip = await JSZip.loadAsync(bytes);
+		}
+		catch (e) {
+			throw new Error("El archivo no es un .docx válido (no se pudo abrir el ZIP): " +
+				(e && e.message ? e.message : e));
+		}
+		entry = zip.file("word/document.xml");
 		if (!entry) throw new Error("El DOCX no contiene word/document.xml");
-		var xml = await entry.async("string");
-		var doc = new DOMParser().parseFromString(xml, "application/xml");
+		progress("Extrayendo word/document.xml…");
+		xml = await entry.async("string", function (metadata) {
+			progress("Extrayendo word/document.xml… " +
+				Math.floor(metadata.percent) + "%");
+		});
+		progress("Analizando el documento…");
+		await yieldToUI();
+		try {
+			doc = new DOMParser().parseFromString(xml, "application/xml");
+		}
+		catch (e) {
+			throw new Error("No se pudo interpretar word/document.xml: " +
+				(e && e.message ? e.message : e));
+		}
 		var paras = Array.prototype.slice.call(doc.getElementsByTagNameNS(W_NS, "p"));
 
 		var idxRef = buscarEncabezado(paras);
@@ -391,7 +531,12 @@ var RefImportLink = (function () {
 		var skipped = [];
 
 		// Citas del cuerpo, de derecha a izquierda por párrafo.
+		progress("Enlazando citas del texto…");
 		for (var pi = 0; pi < idxRef; pi++) {
+			if (pi > 0 && pi % 100 === 0) {
+				progress("Enlazando citas del texto… (" + pi + "/" + idxRef + " párrafos)");
+				await yieldToUI();
+			}
 			var p = paras[pi];
 			var pText = paraText(p);
 			var matches = [];
@@ -430,6 +575,7 @@ var RefImportLink = (function () {
 		}
 
 		// Campo de bibliografía (solo los ítems creados, en orden numérico).
+		progress("Preparando el campo de bibliografía…");
 		var itemsBib = [];
 		Object.keys(createdMap).map(Number).sort(function (a, b) { return a - b; })
 			.forEach(function (n) {
@@ -454,9 +600,26 @@ var RefImportLink = (function () {
 		zip.file("word/document.xml", outXml);
 		// DEFLATE explícito: sin esto JSZip guarda en STORE (sin
 		// comprimir) y el .docx sale ~4x más grande que el original.
-		var out = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-		var outPath = docxPath.replace(/\.docx$/i, "") + "-zotero.docx";
-		await IOUtils.write(outPath, out);
+		progress("Generando la copia del Word…");
+		var out = await zip.generateAsync(
+			{ type: "uint8array", compression: "DEFLATE" },
+			function (metadata) {
+				if (typeof onProgress === "function") {
+					onProgress("Generando la copia del Word… " +
+						Math.floor(metadata.percent) + "%");
+				}
+			}
+		);
+		var outPath = String(docxPath).replace(/\.docx$/i, "") + "-zotero.docx";
+		progress("Guardando la copia en la carpeta del documento…");
+		try {
+			await escribirBytes(outPath, out);
+		}
+		catch (e) {
+			throw new Error("No se pudo guardar «" + outPath + "»: " +
+				(e && e.message ? e.message : e));
+		}
+		progress("Copia guardada correctamente.");
 		return {
 			outputPath: outPath,
 			fields: nCampos,
@@ -467,5 +630,9 @@ var RefImportLink = (function () {
 		};
 	}
 
-	return { linkCitations: linkCitations, _expandir: expandir };
+	return {
+		linkCitations: linkCitations,
+		diagnostico: diagnostico,
+		_expandir: expandir,
+	};
 })();

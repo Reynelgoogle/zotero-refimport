@@ -40,7 +40,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 El script crea `dist/refimport-<versión>.xpi` con las entradas del ZIP en
 barra normal. No uses `Compress-Archive`: en Windows mete las rutas con
 barra invertida y Zotero no encuentra `chrome://refimport/content/...`
-dentro del `.xpi` (el diálogo abre "file not found").
+dentro del `.xpi` (el diálogo abre "file not found"). El informe interno
+`addon/INFORME.md` se excluye del paquete.
 
 En Zotero: **Herramientas → Complementos → ⚙ → Instalar complemento desde
 archivo…** y seleccionar el `.xpi`.
@@ -59,6 +60,7 @@ referencias…**.
    - **Exportar RIS** para guardar la lista.
    - **Enlazar citas en el Word** (solo si el origen fue `.docx`) para
      generar una copia del documento con las citas conectadas a Zotero.
+     El estado muestra las etapas del proceso y confirma la ruta al terminar.
 
 ## Estructura
 

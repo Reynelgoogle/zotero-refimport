@@ -32,6 +32,14 @@
       try {
         Services.scriptloader.loadSubScript(
           "chrome://zotero/content/include.js", this);
+        // JSZip's stream workers call setImmediate as a bare global. Give
+        // this dialog a known timer-backed implementation before loading
+        // JSZip so another add-on's global cannot stall DOCX extraction.
+        globalThis.setImmediate = function (fn) {
+          var args = Array.prototype.slice.call(arguments, 1);
+          return setTimeout(function () { fn.apply(null, args); }, 0);
+        };
+        globalThis.clearImmediate = function (id) { clearTimeout(id); };
         Services.scriptloader.loadSubScript(base + "lib/jszip.min.js", this);
         Services.scriptloader.loadSubScript(base + "lib/ris.js", this);
         Services.scriptloader.loadSubScript(

@@ -33,7 +33,9 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $fs = [System.IO.File]::Open($outPath, [System.IO.FileMode]::CreateNew)
 $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
-    Get-ChildItem $addonDir -Recurse -File | ForEach-Object {
+    Get-ChildItem $addonDir -Recurse -File |
+        Where-Object { $_.FullName -ne (Join-Path $addonDir "INFORME.md") } |
+        ForEach-Object {
         $rel = $_.FullName.Substring($addonDir.Length + 1).Replace('\', '/')
         $entry = $zip.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
         $stream = $entry.Open()
@@ -61,6 +63,9 @@ try {
     $bad = @($z.Entries | Where-Object { $_.FullName.Contains('\') })
     if ($bad.Count -gt 0) {
         throw ("Entradas con barra invertida: " + ($bad.FullName -join ", "))
+    }
+    if ($z.GetEntry("INFORME.md")) {
+        throw "El informe interno addon/INFORME.md no debe incluirse en el XPI"
     }
     $z.Entries | Select-Object FullName, Length | Format-Table -AutoSize
 }

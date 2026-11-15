@@ -20,7 +20,7 @@
 
 var RefImport = {
 	id: "refimport@reynel.cu",
-	version: "0.1.7",
+	version: "0.1.11",
 	rootURI: null,
 	_menuItems: new Map(),
 
