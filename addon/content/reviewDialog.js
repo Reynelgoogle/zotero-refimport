@@ -417,7 +417,10 @@ var RefImportDialog = {
 			let res = await RefImportLink.linkCitations(
 				this.args.sourcePath,
 				this.createdMap,
-				this.args.refs.length
+				this.args.refs.length,
+				// v0.1.8: el avance se ve en la línea de abajo; si un
+				// paso se atasca, el último mensaje dice cuál fue.
+				(msg) => this._status(msg)
 			);
 			let msg = "Listo: " + res.fields + " campos de cita (" + res.instances +
 				" instancias, " + res.cited + " referencias distintas) y bibliografía con " +

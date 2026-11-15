@@ -40,23 +40,25 @@ async function startup({ id, version, rootURI }) {
 		Zotero.logError(e);
 	}
 
-	// Shim setImmediate (v0.1.3): JSZip (utils.delay) llama a
-	// setImmediate pelado en sus rutas asíncronas (loadAsync y
-	// generateAsync), pero en el ámbito chrome del bootstrap NO existe
-	// y el polyfill que trae el bundle lo define en otro objeto
-	// (su wrapper resuelve el global como global -> self -> window
-	// -> {} y no cae en el global compartido). Sin esto, importar un
-	// DOCX revienta con "setImmediate is not defined". setTimeout sí
-	// existe aquí, así que el shim es un alias con los mismos args.
-	if (typeof setImmediate === "undefined") {
-		globalThis.setImmediate = function (fn) {
-			var args = Array.prototype.slice.call(arguments, 1);
-			return setTimeout(function () { fn.apply(null, args); }, 0);
-		};
-	}
-	if (typeof clearImmediate === "undefined") {
-		globalThis.clearImmediate = function (id) { clearTimeout(id); };
-	}
+	// Shim setImmediate (v0.1.3, forzado en v0.1.8): JSZip (utils.delay)
+	// llama a setImmediate pelado en sus rutas asíncronas (loadAsync y
+	// generateAsync). El polyfill que trae el bundle define uno propio
+	// al cargar, así que el shim condicional ("solo si falta") no se
+	// aplicaba... y la estrategia de ese polyfill no dispara en la
+	// ventana XUL del diálogo: el enlazado se quedaba en "Enlazando..."
+	// para siempre, sin error ni archivo. Por eso se fuerza SIEMPRE la
+	// versión con setTimeout, que funciona en cualquier ventana. En el
+	// ámbito del bootstrap el polyfill caía en otro objeto (su wrapper
+	// resuelve el global como global -> self -> window -> {} y no cae
+	// en el global compartido), así que aquí el forzado no cambia nada
+	// respecto a v0.1.3: sin esto, importar un DOCX revienta con
+	// "setImmediate is not defined". setTimeout sí existe aquí, así
+	// que el shim es un alias con los mismos args.
+	globalThis.setImmediate = function (fn) {
+		var args = Array.prototype.slice.call(arguments, 1);
+		return setTimeout(function () { fn.apply(null, args); }, 0);
+	};
+	globalThis.clearImmediate = function (id) { clearTimeout(id); };
 
 	// Librerías propias (cargadas en el ámbito global del bootstrap).
 	Services.scriptloader.loadSubScript(rootURI + "content/lib/jszip.min.js");

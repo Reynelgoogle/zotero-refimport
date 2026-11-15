@@ -32,18 +32,23 @@
 var RefImportLink = (function () {
 	"use strict";
 
-	// Shim setImmediate (v0.1.3): igual que en bootstrap.js — JSZip
-	// (utils.delay) lo llama pelado en loadAsync/generateAsync y en
-	// el ámbito chrome del diálogo puede no existir. Solo si falta.
-	if (typeof setImmediate === "undefined") {
-		globalThis.setImmediate = function (fn) {
-			var args = Array.prototype.slice.call(arguments, 1);
-			return setTimeout(function () { fn.apply(null, args); }, 0);
-		};
-	}
-	if (typeof clearImmediate === "undefined") {
-		globalThis.clearImmediate = function (id) { clearTimeout(id); };
-	}
+	// Shim setImmediate (v0.1.3, forzado en v0.1.8): JSZip (utils.delay)
+	// lo llama pelado en loadAsync/generateAsync. El polyfill de
+	// setImmediate que trae el propio JSZip define uno con estrategia
+	// postMessage/MessageChannel al cargar, así que el shim condicional
+	// ("solo si falta") no se aplicaba... y esa estrategia no dispara
+	// en la ventana XUL del diálogo: loadAsync/generateAsync no se
+	// resuelven nunca y el enlazado se queda en "Enlazando..." sin
+	// error ni archivo. Por eso se fuerza SIEMPRE la versión con
+	// setTimeout, que funciona en cualquier ventana. Se asigna sobre
+	// globalThis (la ventana del diálogo): JSZip resuelve el
+	// setImmediate pelado en ese mismo ámbito, así que la asignación
+	// posterior a la carga del bundle vale igual.
+	globalThis.setImmediate = function (fn) {
+		var args = Array.prototype.slice.call(arguments, 1);
+		return setTimeout(function () { fn.apply(null, args); }, 0);
+	};
+	globalThis.clearImmediate = function (id) { clearTimeout(id); };
 
 	var W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 	var XML_NS = "http://www.w3.org/XML/1998/namespace";
@@ -316,16 +321,22 @@ var RefImportLink = (function () {
 		return -1;
 	}
 
-	async function linkCitations(docxPath, createdMap, totalRefs) {
+	async function linkCitations(docxPath, createdMap, totalRefs, onProgress) {
 		/* createdMap: { "1": { uri, itemData }, ... } (claves = nº de ref).
 		 * totalRefs: nº total de referencias parseadas (para validar rango).
+		 * onProgress (opcional): se llama con el paso en curso para que
+		 * el diálogo muestre dónde va; si un paso se atasca, el último
+		 * mensaje dice cuál fue (v0.1.8).
 		 * Devuelve { outputPath, fields, instances, cited, bibItems, skipped }. */
+		var avisar = typeof onProgress === "function" ? onProgress : function () {};
 		// Igual que en _readDocx: IOUtils.read devuelve un Uint8Array
 		// de otro realm y JSZip lo rechaza sin la copia.
+		avisar("Leyendo documento…");
 		var bytes = new Uint8Array(await IOUtils.read(docxPath));
 		var zip = await JSZip.loadAsync(bytes);
 		var entry = zip.file("word/document.xml");
 		if (!entry) throw new Error("El DOCX no contiene word/document.xml");
+		avisar("Buscando citas y bibliografía…");
 		var xml = await entry.async("string");
 		var doc = new DOMParser().parseFromString(xml, "application/xml");
 		var paras = Array.prototype.slice.call(doc.getElementsByTagNameNS(W_NS, "p"));
@@ -454,8 +465,10 @@ var RefImportLink = (function () {
 		zip.file("word/document.xml", outXml);
 		// DEFLATE explícito: sin esto JSZip guarda en STORE (sin
 		// comprimir) y el .docx sale ~4x más grande que el original.
+		avisar("Generando el documento enlazado…");
 		var out = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 		var outPath = docxPath.replace(/\.docx$/i, "") + "-zotero.docx";
+		avisar("Guardando…");
 		await IOUtils.write(outPath, out);
 		return {
 			outputPath: outPath,
