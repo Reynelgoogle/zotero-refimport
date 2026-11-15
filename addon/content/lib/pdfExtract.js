@@ -71,6 +71,19 @@ const FOOTER_RES = [
   /^©/,
   /^page\s+\d+/i,
 ];
+const AUTHOR_FAMILY =
+  "[\\p{L}][\\p{L}\\p{M}'’\\-]*(?:\\s+[\\p{L}][\\p{L}\\p{M}'’\\-]*){0,3}";
+const AUTHOR_CORPORATE =
+  "(?:World Health Organization|Centers? for Disease Control and Prevention|" +
+  "National (?:Cancer|Health|Institutes?)|United Nations|European Commission|" +
+  "Ministry of [^.]+|University of [^.]+|WHO|OMS|UNICEF|UNESCO|OECD|NCI|CDC|NIH|NHS)";
+const AUTHOR_LINE_RE = new RegExp(
+  "^(?:(?:" + AUTHOR_FAMILY + ")\\s+[A-Z]{1,4}(?:[.\\-\\s]*[A-Z]{1,4})*(?=[,.:])" +
+  "|(?:" + AUTHOR_FAMILY + "),\\s*[A-Z][\\p{L}\\p{M}'’\\-]*\\.?" +
+  "(?:\\s+[A-Z]{1,4}(?![\\p{L}])\\.?)?(?=[,.:])" +
+  "|" + AUTHOR_CORPORATE + "\\.)",
+  "u"
+);
 
 function esPie(linea) {
   return FOOTER_RES.some((rx) => rx.test(linea));
@@ -141,6 +154,23 @@ function buscarEncabezado(lineas) {
   let i = lineas.findIndex((ln) => esEncabezadoExacto(ln));
   if (i !== -1) return i;
   return lineas.findIndex((ln) => esEncabezadoParecido(ln));
+}
+
+function encabezadoConReferencia(linea) {
+  const colon = linea.indexOf(":");
+  if (colon !== -1 && esEncabezadoExacto(linea.slice(0, colon))) {
+    const texto = linea.slice(colon + 1).trim();
+    if (texto) return texto;
+  }
+  const marker =
+    /\s+(?=(?:\d+\s*[.)]|\[\s*\d+\s*\]|\(\s*\d+\s*\)|\d+\s*[-–—])\s*\S)/g;
+  let match;
+  while ((match = marker.exec(linea))) {
+    if (esEncabezadoExacto(linea.slice(0, match.index))) {
+      return linea.slice(match.index + match[0].length).trim();
+    }
+  }
+  return "";
 }
 
 /* Fallback sin encabezado: primera corrida de 3+ referencias
@@ -240,10 +270,25 @@ function separarLineasNumeradas(lineas) {
   return salida;
 }
 
+function pareceInicioSinNumero(texto) {
+  return AUTHOR_LINE_RE.test(texto.trim());
+}
+
 function extraerReferencias(lineas) {
   /* Devuelve la lista de referencias en texto (una por cadena). */
   // 1. localizar el encabezado de referencias (o el fallback)
   let idxEnc = buscarEncabezado(lineas);
+  let inline = idxEnc === -1 ? "" : encabezadoConReferencia(lineas[idxEnc]);
+  if (idxEnc === -1) {
+    for (let i = 0; i < lineas.length; i++) {
+      const remainder = encabezadoConReferencia(lineas[i]);
+      if (remainder) {
+        idxEnc = i;
+        inline = remainder;
+        break;
+      }
+    }
+  }
   let idxInicio;
   if (idxEnc !== -1) {
     idxInicio = idxEnc + 1;
@@ -257,7 +302,10 @@ function extraerReferencias(lineas) {
     idxInicio = idxCorrida;
   }
   // v0.1.6: separar referencias que vienen pegadas en la misma línea.
-  const resto = separarLineasNumeradas(lineas.slice(idxInicio));
+  const lineasRestantes = inline
+    ? [inline, ...lineas.slice(idxEnc + 1)]
+    : lineas.slice(idxInicio);
+  const resto = separarLineasNumeradas(lineasRestantes);
   // 2. segmentar por número y unir líneas. El número debe ser
   // SECUENCIAL (1, 2, 3...): una línea como "204. 10.1055/..." es la
   // continuación de la página partida "194-", no la referencia 204.
@@ -285,7 +333,20 @@ function extraerReferencias(lineas) {
       esperado = num + 1;
       actual = c.texto;
     } else {
-      if (actual === null) continue; // texto antes de la primera referencia
+      if (num !== null && actual !== null && num !== esperado &&
+        refs.length >= 2 && TAIL_LIGERO_RE.test(actual)) {
+        break;
+      }
+      if (actual === null) {
+        if (pareceInicioSinNumero(s)) actual = s;
+        continue;
+      }
+      if (num === null && TAIL_LIGERO_RE.test(actual) &&
+        pareceInicioSinNumero(s)) {
+        refs.push(actual);
+        actual = s;
+        continue;
+      }
       if (actual.endsWith("-")) actual += s;
       else actual += " " + s;
     }
@@ -301,5 +362,14 @@ function extraerReferencias(lineas) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { extraerReferencias, esEncabezado, esEncabezadoExacto, esEncabezadoParecido, buscarEncabezado, normalizarEncabezado, numDeLinea };
+  module.exports = {
+    extraerReferencias,
+    esEncabezado,
+    esEncabezadoExacto,
+    esEncabezadoParecido,
+    buscarEncabezado,
+    normalizarEncabezado,
+    numDeLinea,
+    pareceInicioSinNumero,
+  };
 }

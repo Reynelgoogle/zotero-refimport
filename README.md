@@ -23,6 +23,23 @@ a internet y no necesita conexión.
    `ADDIN ZOTERO_BIBL` (el mismo formato que usa el plugin oficial de
    Word).
 
+## Alcance del parser
+
+- Reconoce listas numeradas y, en PDF con encabezado de referencias,
+  también listas sin numerar; recompone referencias que continúan en otra
+  línea y detecta varias entradas pegadas en una línea.
+- En Word respeta texto distribuido entre runs y separadores de tabulación
+  o salto de línea. También acepta la primera referencia en la misma línea
+  que el encabezado.
+- Parsea artículos Vancouver, libros con edición explícita y capítulos
+  introducidos por «En:» o «In:». Admite autores con iniciales o nombres
+  completos separados por comas, autores institucionales, revistas
+  abreviadas con puntos, rangos de páginas y DOI en URL de `doi.org`.
+- La interpretación sigue siendo local y basada en reglas: los casos
+  ambiguos se muestran en la revisión para que se puedan corregir antes de
+  crear ítems. No se consulta Crossref ni se completan metadatos por
+  internet.
+
 ## Requisitos
 
 - Zotero 7.0 o superior.
@@ -93,6 +110,8 @@ publican en GitHub.
   hay OCR).
 - **«et al.»**: si el documento solo lista los primeros autores, el ítem
   se crea con esos autores y se marca un aviso.
+- **Variantes bibliográficas fuera de Vancouver**: pueden requerir
+  corrección manual; los campos que no se reconocen no se inventan.
 - **DOI ausente**: se deja vacío; no se inventa ni se busca en línea.
 - **Citas partidas en varios fragmentos** del Word: esas citas no se
   enlazan y se informan como omitidas; el resto del documento sí se

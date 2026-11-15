@@ -102,7 +102,7 @@ var RefImportDialog = {
 				String(ref.numero),
 				ref.authors.map((a) => a.family + (a.given ? " " + a.given : "")).join(", ") || "—",
 				ref.title || "—",
-				ref.journal || ref.book || "—",
+				ref.journal || ref.book || ref.publisher || "—",
 				(ref.year || "—") + (ref.month ? " " + ref.month : ""),
 				ref.pagesEnd ? ref.pages + "-" + ref.pagesEnd : (ref.pages || "—"),
 				ref.doi || "—",
@@ -284,6 +284,7 @@ var RefImportDialog = {
 
 	async _createOne(ref, collectionID) {
 		let type = ref.type === "chapter" ? "bookSection"
+			: ref.type === "book" ? "book"
 			: ref.type === "webpage" ? "webpage"
 			: ref.type === "unknown" ? (ref.journal ? "journalArticle" : "document")
 			: "journalArticle";
@@ -294,6 +295,11 @@ var RefImportDialog = {
 		}
 		else if (type === "bookSection") {
 			if (ref.book) this._safeSet(item, "bookTitle", ref.book);
+			if (ref.place) this._safeSet(item, "place", ref.place);
+			if (ref.publisher) this._safeSet(item, "publisher", ref.publisher);
+			if (ref.edition) this._safeSet(item, "edition", ref.edition);
+		}
+		else if (type === "book") {
 			if (ref.place) this._safeSet(item, "place", ref.place);
 			if (ref.publisher) this._safeSet(item, "publisher", ref.publisher);
 			if (ref.edition) this._safeSet(item, "edition", ref.edition);
@@ -382,6 +388,7 @@ var RefImportDialog = {
 		let csl = {
 			id: uri,
 			type: ref.type === "chapter" ? "chapter"
+				: ref.type === "book" ? "book"
 				: ref.type === "webpage" ? "webpage" : "article-journal",
 			title: ref.title || "",
 		};

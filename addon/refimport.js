@@ -20,7 +20,7 @@
 
 var RefImport = {
 	id: "refimport@reynel.cu",
-	version: "0.1.11",
+	version: "0.1.12",
 	rootURI: null,
 	_menuItems: new Map(),
 
@@ -157,10 +157,26 @@ var RefImport = {
 	},
 
 	_paraText(p) {
-		let ts = p.getElementsByTagNameNS(this.W_NS, "t");
-		let s = "";
-		for (let i = 0; i < ts.length; i++) s += ts[i].textContent;
-		return s;
+		let parts = [];
+		let walk = (node) => {
+			for (let child of Array.from(node.childNodes || [])) {
+				if (child.nodeType !== 1) continue;
+				if (child.namespaceURI === this.W_NS) {
+					if (child.localName === "t") {
+						parts.push(child.textContent);
+						continue;
+					}
+					if (child.localName === "tab" ||
+						child.localName === "br" || child.localName === "cr") {
+						parts.push(" ");
+						continue;
+					}
+				}
+				walk(child);
+			}
+		};
+		walk(p);
+		return parts.join("");
 	},
 
 	_isHeading(p) {
@@ -209,12 +225,29 @@ var RefImport = {
 	// encabezado real que viene después).
 	_buscarEncabezado(paras) {
 		for (let i = 0; i < paras.length; i++) {
-			if (this._isRefHeadingExacto(this._paraText(paras[i]))) return i;
+			let text = this._paraText(paras[i]);
+			if (this._isRefHeadingExacto(text) ||
+				this._textoTrasEncabezado(text)) return i;
 		}
 		for (let i = 0; i < paras.length; i++) {
 			if (this._isRefHeadingParecido(this._paraText(paras[i]))) return i;
 		}
 		return -1;
+	},
+
+	_textoTrasEncabezado(text) {
+		let colon = text.indexOf(":");
+		if (colon !== -1 && this._isRefHeadingExacto(text.slice(0, colon))) {
+			return text.slice(colon + 1).trim();
+		}
+		let marker = /\s+(?=(?:\d+\s*[.)]|\[\s*\d+\s*\]|\(\s*\d+\s*\)|\d+\s*[-–—])\s*\S)/g;
+		let match;
+		while ((match = marker.exec(text))) {
+			if (this._isRefHeadingExacto(text.slice(0, match.index))) {
+				return text.slice(match.index + match[0].length).trim();
+			}
+		}
+		return "";
 	},
 
 	_esNumerado(text) {
@@ -322,6 +355,15 @@ var RefImport = {
 		// partida en dos párrafos); si NINGUNO trae número, cada
 		// párrafo es una referencia.
 		let cands = [];
+		if (idxRef !== -1) {
+			let inline = this._textoTrasEncabezado(this._paraText(paras[idxRef]));
+			if (inline) {
+				cands.push({
+					numbered: this._esNumerado(inline),
+					text: inline,
+				});
+			}
+		}
 		for (let i = idxInicio; i < paras.length; i++) {
 			if (this._isHeading(paras[i])) break;
 			let t = this._paraText(paras[i]).trim();
