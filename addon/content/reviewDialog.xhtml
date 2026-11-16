@@ -42,6 +42,10 @@
         globalThis.clearImmediate = function (id) { clearTimeout(id); };
         Services.scriptloader.loadSubScript(base + "lib/jszip.min.js", this);
         Services.scriptloader.loadSubScript(base + "lib/ris.js", this);
+        // pdfExtract.js: linkCitations.js usa lineaPareceRef y
+        // pareceInicioSinNumero para validar el encabezado (F1);
+        // debe cargarse antes que linkCitations.js.
+        Services.scriptloader.loadSubScript(base + "lib/pdfExtract.js", this);
         Services.scriptloader.loadSubScript(
           base + "linkCitations.js", this);
         Services.scriptloader.loadSubScript(
